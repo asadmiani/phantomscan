@@ -1,0 +1,170 @@
+import itertools
+from rich.layout import Layout
+from rich.panel import Panel
+from rich.live import Live
+import psutil
+import time
+
+
+def generate_layout():
+
+    layout = Layout()
+
+    # Two rows
+    layout.split_column(
+        Layout(name="row1", size=8),
+        Layout(name="row2")
+    )
+
+    # Row 1 columns
+    layout["row1"].split_row(
+        Layout(name="ram", ratio=1),
+        Layout(name="cpu", ratio=1),
+        Layout(name="logo", ratio=3),
+        Layout(name="warning", ratio=1),
+    )
+
+    # Row 2 columns
+    layout["row2"].split_row(
+        Layout(name="lock", ratio=1),
+        Layout(name="scanner", ratio=2),
+        Layout(name="tools", ratio=1),
+    )
+
+    return layout
+
+   def create_bar(percentage, length=20):
+
+       filled = int((percentage / 100) * length)
+       empty = length - filled
+
+       bar = "█" * filled + "-" * empty
+
+       return f"[{bar}] {percentage}%"
+   def ram_panel():
+       ram = psutil.virtual_memory().percent
+       return Panel(f"RAM Usage\n\n{ram}%", title="RAM")
+
+
+   def cpu_panel():
+       cpu = psutil.cpu_percent()
+       return Panel(f"CPU Usage\n\n{cpu}%", title="CPU")
+
+
+    def logo_panel():
+
+       logo = """
+██████╗ ██╗  ██╗ █████╗ ███╗   ██╗████████╗ ██████╗ ███╗   ███╗
+██╔══██╗██║  ██║██╔══██╗████╗  ██║╚══██╔══╝██╔═══██╗████╗ ████║
+██████╔╝███████║███████║██╔██╗ ██║   ██║   ██║   ██║██╔████╔██║
+██╔═══╝ ██╔══██║██╔══██║██║╚██╗██║   ██║   ██║   ██║██║╚██╔╝██║
+██║     ██║  ██║██║  ██║██║ ╚████║   ██║   ╚██████╔╝██║ ╚═╝ ██║
+╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝   ╚═╝    ╚═════╝ ╚═╝     ╚═╝
+"""
+
+    return Panel(logo, title="PhantomScan")
+
+
+def warning_panel():
+    return Panel(
+        "⚠ Only use for ethical testing",
+        title="Warning"
+    )
+
+
+def lock_panel(frame):
+
+    return Panel(
+        frame,
+        title="Security Core",
+    )
+
+
+def scanner_panel():
+
+    text = """
+PhantomScan Scanner Output
+
+Waiting for target...
+"""
+
+    return Panel(text, title="Scanner")
+
+
+def tools_panel():
+
+    tools = """
+Running Tools
+
+nmap
+crawler
+sql scanner
+xss scanner
+api scanner
+"""
+
+    return Panel(tools, title="Tools")
+lock_frames = [
+"""
+       access
+   secure   protect
+
+        🔒
+
+   defend   encrypt
+       monitor
+""",
+
+"""
+       monitor
+   access   secure
+
+        🔒
+
+   protect   defend
+       encrypt
+""",
+
+"""
+       encrypt
+   monitor   access
+
+        🔒
+
+   secure   protect
+       defend
+""",
+
+"""
+       defend
+   encrypt   monitor
+
+        🔒
+
+   access   secure
+       protect
+"""
+]
+
+def run_dashboard():
+
+    layout = generate_layout()
+
+    frames = itertools.cycle(lock_frames)
+
+    with Live(layout, refresh_per_second=2):
+
+        while True:
+
+            layout["ram"].update(ram_panel())
+            layout["cpu"].update(cpu_panel())
+            layout["logo"].update(logo_panel())
+            layout["warning"].update(warning_panel())
+
+            frame = next(frames)
+
+            layout["lock"].update(lock_panel(frame))
+            layout["scanner"].update(scanner_panel())
+            layout["tools"].update(tools_panel())
+
+            time.sleep(0.5)

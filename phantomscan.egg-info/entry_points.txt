@@ -1,0 +1,2 @@
+[console_scripts]
+phantomscan = phantomscan.main:run

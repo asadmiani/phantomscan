@@ -1,0 +1,20 @@
+[project]
+name = "phantomscan"
+version = "0.1.0"
+description = "Autonomous AI-powered security scanner"
+authors = [
+    {name = "Asad Ullah"}
+]
+dependencies = [
+    "requests",
+    "colorama",
+    "reportlab"
+]
+requires-python = ">=3.10"
+
+[project.scripts]
+phantomscan = "phantomscan.main:run"
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"

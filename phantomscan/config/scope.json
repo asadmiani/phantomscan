@@ -1,0 +1,14 @@
+{
+  "allowed_domains": [
+    "localhost",
+    "127.0.0.1",
+    "testphp.vulnweb.com",
+    "api.twilio.com",
+    "pikachu.bachang.org",
+    "zero.webappsecurity.com",
+    "sendgrid.com",
+   "api.sendgrid.com"
+ ],
+  "max_depth": 3,
+  "rate_limit": 2
+}

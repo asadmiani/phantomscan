@@ -1,0 +1,176 @@
+"""
+Autonomous AI Security Platform (Advanced CLI)
+Author: Asad Ullah
+"""
+
+from phantomscan.scanner.idor_scanner import IDORScanner
+import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+from phantomscan.banner import print_banner
+from phantomscan.loader import boot_sequence
+
+# Core & AI
+from phantomscan.core.scope import ScopeValidator
+from phantomscan.ai_engine.false_positive_filter import FalsePositiveFilter
+
+# Recon
+from phantomscan.recon.http_detect import HTTPDetector
+from phantomscan.recon.nmap_scan import NmapScanner
+from phantomscan.recon.fingerprint import FingerprintEngine
+
+# Scanner
+from phantomscan.scanner.crawler import WebCrawler
+from phantomscan.scanner.param_extractor import ParamExtractor
+from phantomscan.scanner.header_analyzer import HeaderAnalyzer
+from phantomscan.scanner.advanced_sqli import AdvancedSQLiScanner
+from phantomscan.scanner.advanced_xss import AdvancedXSSScanner
+from phantomscan.scanner.api_scanner import APIScanner
+
+# Storage & Reports
+from phantomscan.storage.db import Database
+from phantomscan.storage.dataset import DatasetManager
+from phantomscan.reports.report_generator import ReportGenerator
+
+
+# -------------------------------
+# HELPER FUNCTION
+# -------------------------------
+def scan_single_url(url, scanners, db, dataset, scan_id):
+    results = []
+
+    print(f"[+] Scanning: {url}")
+
+    params = scanners["param_extractor"].extract(url)
+
+    findings = (
+        scanners["header"].analyze(url)
+        + scanners["sqli"].scan(url, params)
+        + scanners["xss"].scan(url, params)
+    )
+
+    for f in findings:
+        print(f"[!] {f.get('type')} found at {url}")
+        db.insert_finding(scan_id, f)
+        dataset.add_entry(f)
+
+    results.extend(findings)
+    return results
+
+
+# -------------------------------
+# MAIN
+# -------------------------------
+def main():
+
+    print_banner()
+    boot_sequence()
+
+    print("\n=== Advanced PhantomScan CLI ===\n")
+
+    target = input("Enter target domain or URL: ").strip()
+
+    if not target.startswith("http"):
+        target = "http://" + target
+
+    # Scope check
+    if not ScopeValidator().validate(target):
+        print("[-] Target out of scope")
+        return
+
+    print("[+] Target validated\n")
+
+    # Initialize
+    http_detector = HTTPDetector()
+    nmap_scanner = NmapScanner()
+    fingerprint = FingerprintEngine()
+
+    crawler = WebCrawler()
+    api_scanner = APIScanner()
+
+    scanners = {
+        "param_extractor": ParamExtractor(),
+        "header": HeaderAnalyzer(),
+        "sqli": AdvancedSQLiScanner(),
+        "xss": AdvancedXSSScanner()
+    }
+
+    db = Database()
+    dataset = DatasetManager()
+    reporter = ReportGenerator()
+    fp_filter = FalsePositiveFilter()
+
+    scan_id = db.insert_scan(target, str(datetime.datetime.now()))
+
+    all_findings = []
+
+    # -------------------------------
+    # Recon
+    # -------------------------------
+    print("[+] Detecting HTTP...")
+    http_detector.detect(target)
+
+    print("[+] Running Nmap...")
+    nmap_scanner.scan(target)
+
+    print("[+] Fingerprinting...")
+    fingerprint.analyze(target)
+
+    # -------------------------------
+    # Crawling
+    # -------------------------------
+    print("[+] Crawling target...")
+    urls = crawler.crawl(target) or [target]
+
+    print(f"[+] {len(urls)} URLs found\n")
+
+    # -------------------------------
+    # MULTI-THREAD SCANNING
+    # -------------------------------
+    print("[+] Starting multi-threaded scan...\n")
+
+    with ThreadPoolExecutor(max_workers=5) as executor:
+
+        futures = [
+            executor.submit(scan_single_url, url, scanners, db, dataset, scan_id)
+            for url in urls
+        ]
+
+        for future in as_completed(futures):
+            all_findings.extend(future.result())
+
+    # -------------------------------
+    # API Scan
+    # -------------------------------
+    print("\n[+] Scanning APIs...")
+    all_findings.extend(api_scanner.scan(target))
+
+    # -------------------------------
+    # Filter
+    # -------------------------------
+    all_findings = fp_filter.filter(all_findings)
+
+    # -------------------------------
+    # Report
+    # -------------------------------
+    print("\n[+] Generating report...")
+
+    structured = [{
+        "title": f.get("type", "Unknown"),
+        "risk": f.get("severity", "Medium"),
+        "url": f.get("url", "N/A")
+    } for f in all_findings]
+
+    md, pdf = reporter.generate_full_report(target, structured)
+
+    print("\n=== Scan Completed ===")
+    print(f"[+] Report: {md}")
+    print(f"[+] Report: {pdf}")
+    print(f"[+] Total findings: {len(all_findings)}")
+
+
+# -------------------------------
+# ENTRY
+# -------------------------------
+def run():
+    main()

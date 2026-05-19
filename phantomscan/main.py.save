@@ -1,0 +1,272 @@
+"""
+Autonomous AI Security Platform
+Final Integrated Main Controller
+Author: Asad Ullah
+"""
+#try:
+from phantomscan.dashboard.ui import color_log
+from phantomscan.dashboard.ui import update_progress
+import threading
+import datetime
+
+from phantomscan.dashboard import ui
+from phantomscan.dashboard.ui import run_dashboard
+from phantomscan.banner import print_banner
+from phantomscan.loader import boot_sequence
+
+# AI
+from phantomscan.ai_engine.false_positive_filter import FalsePositiveFilter
+from phantomscan.ai_engine.vuln_classifier import VulnerabilityClassifier
+from phantomscan.ai_engine.cvss_v3 import CVSSv3Calculator
+from phantomscan.ai_engine.risk_model import AdvancedRiskModel
+
+# Core
+from phantomscan.core.scope import ScopeValidator
+from phantomscan.core.decision_engine import DecisionEngine
+
+# Recon
+from phantomscan.recon.http_detect import HTTPDetector
+from phantomscan.recon.nmap_scan import NmapScanner
+from phantomscan.recon.fingerprint import FingerprintEngine
+
+# Scanner
+from phantomscan.scanner.crawler import WebCrawler
+from phantomscan.scanner.param_extractor import ParamExtractor
+from phantomscan.scanner.header_analyzer import HeaderAnalyzer
+from phantomscan.scanner.advanced_sqli import AdvancedSQLiScanner
+from phantomscan.scanner.advanced_xss import AdvancedXSSScanner
+from phantomscan.scanner.api_scanner import APIScanner
+
+# Storage
+from phantomscan.storage.db import Database
+from phantomscan.storage.dataset import DatasetManager
+
+# Reports
+from phantomscan.reports.report_generator import ReportGenerator
+
+
+def deduplicate_findings(findings):
+    seen = set()
+    unique = []
+
+    for f in findings:
+        identifier = (
+            f.get("type"),
+            f.get("url"),
+            f.get("payload")
+        )
+
+        if identifier not in seen:
+            seen.add(identifier)
+            unique.append(f)
+
+    return unique
+
+
+def main(target):
+
+    # -------------------------------
+    # Startup
+    # -------------------------------
+    print_banner()
+    boot_sequence()
+
+    #target = input("Enter target domain or URL: ").strip()
+
+    if not target.startswith("http"):
+        target = "http://" + target
+
+    # -------------------------------
+    # Scope Validation
+    # -------------------------------
+    scope = ScopeValidator()
+
+    if not scope.validate(target):
+        ui.log("[-] Target out of scope")
+        return
+
+    ui.log("[+] Target validated")
+
+    # -------------------------------
+    # Initialize Components
+    # -------------------------------
+    http_detector = HTTPDetector()
+    nmap_scanner = NmapScanner()
+    fingerprint = FingerprintEngine()
+
+    crawler = WebCrawler()
+    param_extractor = ParamExtractor()
+    header_analyzer = HeaderAnalyzer()
+    sqli_scanner = AdvancedSQLiScanner()
+    xss_scanner = AdvancedXSSScanner()
+    api_scanner = APIScanner()
+
+    risk_model = AdvancedRiskModel()
+    decision_engine = DecisionEngine()
+    fp_filter = FalsePositiveFilter()
+
+    db = Database()
+    dataset = DatasetManager()
+    reporter = ReportGenerator()
+    classifier = VulnerabilityClassifier()
+    cvss = CVSSv3Calculator()
+
+    scan_id = db.insert_scan(target, str(datetime.datetime.now()))
+
+    all_findings = []
+
+    # -------------------------------
+    # HTTP Detection
+    # -------------------------------
+    ui.current_tool = "HTTP Detector"
+    update_progress("Recon", 20)
+    ui.log("[+] Detecting HTTP service...")
+    http_info = http_detector.detect(target)
+
+    # -------------------------------
+    # Nmap Scan
+    # -------------------------------
+    ui.current_tool = "Nmap"
+    update_progress("Recon", 60)
+    ui.log("[+] Running Nmap scan...")
+    nmap_result = nmap_scanner.scan(target)
+
+    if nmap_result.get("ports"):
+        for port in nmap_result["ports"]:
+            ui.log(f"[+] Port {port['port']} ({port['service']}) open")
+    else:
+        ui.log("[-] No open ports found")
+
+    # -------------------------------
+    # Fingerprinting
+    # -------------------------------
+    ui.current_tool = "Fingerprinting"
+    update_progress("Recon", 100)
+    ui.log("[+] Fingerprinting service...")
+    fingerprint_info = fingerprint.analyze(target)
+
+    # -------------------------------
+    # Crawling
+    # -------------------------------
+    ui.current_tool = "Crawler"
+    ui.log("[+] Crawling target...")
+    urls = crawler.crawl(target)
+
+    if not urls:
+        urls = [target]
+
+    ui.log(f"[+] {len(urls)} URLs discovered")
+
+    # -------------------------------
+    # Scan URLs
+    # -------------------------------
+    for url in urls:
+
+        progress_step = int((urls.index(url) + 1) / len(urls) * 100)
+        update_progress("Scanning", progress_step)
+
+        ui.current_tool = "Scanner"
+        update_progress("Scanning", 20)
+        ui.log(f"[+] Scanning: {url}")
+
+        params = param_extractor.extract(url)
+
+        header_findings = header_analyzer.analyze(url)
+        sqli_findings = sqli_scanner.scan(url, params)
+        xss_findings = xss_scanner.scan(url, params)
+
+        findings = header_findings + sqli_findings + xss_findings
+
+        for finding in findings:
+
+            severity = finding.get("severity", "medium").lower()
+            vuln_type = finding.get("type", "Unknown")
+
+            color_log(f"{vuln_type} detected at {url}", severity)
+
+            risk_result = risk_model.compute_final_risk(finding)
+            finding["risk_score"] = risk_result["final_risk_score"]
+            finding["severity"] = risk_result["final_severity"]
+
+            # CVSS
+            metrics = {"AV":"N","AC":"L","PR":"N","UI":"N","C":"L","I":"L","A":"N"}
+            score, severity, vector = cvss.calculate(metrics)
+
+            finding["cvss_score"] = score
+            finding["cvss_severity"] = severity
+            finding["cvss_vector"] = vector
+
+            # Classification
+            classification = classifier.classify(finding.get("type", ""))
+            finding["category"] = classification["category"]
+
+            db.insert_finding(scan_id, finding)
+            dataset.add_entry(finding)
+
+        all_findings.extend(findings)
+
+    # -------------------------------
+    # API Scan
+    # -------------------------------
+    ui.current_tool = "API Scanner"
+    update_progress("Exploitation", 50)
+    ui.log("[+] Scanning APIs...")
+    api_findings = api_scanner.scan(target)
+
+    all_findings.extend(api_findings)
+    update_progress("Exploitation", 100)
+
+    # -------------------------------
+    # Filter False Positives
+    # -------------------------------
+    all_findings = deduplicate_findings(all_findings)
+    all_findings = fp_filter.filter(all_findings)
+
+    # -------------------------------
+    # Report Generation
+    # -------------------------------
+    ui.current_tool = "Reporting"
+    update_progress("Reporting", 30)
+    ui.log("[+] Generating report...")
+    update_progress("Reporting", 100)
+
+    structured = []
+    for f in all_findings:
+        structured.append({
+            "title": f.get("type", "Unknown"),
+            "risk": f.get("severity", "Medium"),
+            "url": f.get("url", "N/A"),
+            "description": f.get("description", "")
+        })
+
+    md_file, pdf_le = reporter.generate_full_report(
+        target=target,
+        findings=structured
+    )
+
+    ui.log(f"[+] Report saved: {md_file}")
+    ui.log(f"[+] Report saved: {pdf_file}")
+    ui.log(f"[+] Total findings: {len(all_findings)}")
+
+
+# -------------------------------
+# ENTRY POINT
+# -------------------------------
+
+def run():
+
+    from phantomscan.dashboard import ui
+
+    def scanner_loop():
+
+        while True:
+
+            if ui.scan_requested:
+                ui.scan_requested = False
+
+                target = ui.target_value
+
+                if 
+
+if __name__ == "__main__":
+    run()
